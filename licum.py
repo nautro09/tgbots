@@ -20,6 +20,8 @@ import logging
 from youtube_search import YoutubeSearch
 import pyshorteners
 from googletrans import Translator
+from telebot.types import Message
+
 
 # API ключ OpenWeatherMap
 API = os.getenv('API', 'YOUR_API_KEY')
@@ -800,67 +802,92 @@ def unmute_user(call):
         bot.answer_callback_query(call.id, "Убери руки, надо иметь права", show_alert=True)
 
 
+# Путь к папке, где будет сохраняться база данных
+db_folder = r"C:\Users\Ш\OneDrive\Desktop\tgbot\tgbots"  # Используем raw-строку для корректной обработки пути
+
+# Убедимся, что папка существует
+os.makedirs(db_folder, exist_ok=True)
+
+# Путь к базе данных
+db_path = os.path.join(db_folder, "bans.db")
+
 # Команда для бана пользователя
 @bot.message_handler(commands=['бан'])
 def ban_user(message):
-    if message.reply_to_message:
-        user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
-        if user_status in ['administrator', 'creator']:
-            try:
-                command_parts = message.text.split()
-                if len(command_parts) < 3:
-                    bot.reply_to(message, "❗ Укажите корректное время (в часах) и причину. Пример: /бан 1  Спам.")
-                else:
-                    duration = command_parts[1]  # время бана (например, 1 день, 2 часа)
-                    reason = ' '.join(command_parts[2:])  # причина бана
-
-                    # Блокировка пользователя (бан)
-                    bot.kick_chat_member(message.chat.id, message.reply_to_message.from_user.id)
-
-                    # Создание кнопки для разбанивания
-                    unban_button = InlineKeyboardMarkup().add(
-                        InlineKeyboardButton("Разбанить",
-                                             callback_data=f"unban_{message.reply_to_message.from_user.id}")
-                    )
-
-                    # Экранирование имени пользователя для корректного использования в HTML
-                    user_mention = f"<a href='tg://user?id={message.reply_to_message.from_user.id}'>{html.escape(message.reply_to_message.from_user.first_name)}</a>"
-
-                    # Отправка сообщения о бане с кнопкой "Разбанить"
-                    bot.send_message(
-                        message.chat.id,
-                        f"🚫 Пользователь: {user_mention}\nБыл забанен на {duration}.\nПричина: {reason}.",
-                        parse_mode='HTML',
-                        reply_markup=unban_button
-                    )
-            except Exception as e:
-                bot.reply_to(message, f"❗ Произошла ошибка: {e}")
-        else:
-            bot.reply_to(message, "❗ У вас нет прав для выполнения этой команды.")
-    else:
+    # Проверка, что команда использована ответом на сообщение
+    if not message.reply_to_message:
         bot.reply_to(message, "❗ Используйте команду ответом на сообщение, чтобы забанить участника.")
+        return
+
+    # Проверка прав администратора
+    user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+    if user_status not in ['administrator', 'creator']:
+        bot.reply_to(message, "❗ У вас нет прав для выполнения этой команды.")
+        return
+
+    # Обработка аргументов команды
+    command_parts = message.text.split()
+    if len(command_parts) < 3:
+        bot.reply_to(message, "❗ Укажите корректное время (в часах) и причину. Пример: /бан 1 Спам.")
+        return
+
+    try:
+        duration = command_parts[1]
+        reason = ' '.join(command_parts[2:])
+        target_user = message.reply_to_message.from_user
+
+        # Бан пользователя
+        bot.kick_chat_member(message.chat.id, target_user.id)
+
+        # Запись в базу данных
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS banned_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    username TEXT,
+                    reason TEXT,
+                    ban_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute(
+                "INSERT INTO banned_users (user_id, username, reason) VALUES (?, ?, ?)",
+                (target_user.id, target_user.username or '', reason)
+            )
+
+        # Кнопка разбан
+        unban_button = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("Разбанить", callback_data=f"unban_{target_user.id}")
+        )
+
+        # Упоминание
+        user_mention = f"<a href='tg://user?id={target_user.id}'>{html.escape(target_user.first_name)}</a>"
+
+        bot.send_message(
+            message.chat.id,
+            f"🚫 Пользователь: {user_mention}\nБыл забанен на {duration} часов.\nПричина: {reason}.",
+            parse_mode='HTML',
+            reply_markup=unban_button
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"❗ Произошла ошибка: {e}")
 
 
-# Обработчик для разбанивания с проверкой прав администратора
+# Обработчик кнопки для разбана
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unban_"))
 def unban_user(call):
-    user_id = int(call.data.split('_')[1])  # Получаем ID пользователя из callback_data
-
-    # Проверяем статус пользователя, который нажал на кнопку
+    user_id = int(call.data.split('_')[1])
     user_status = bot.get_chat_member(call.message.chat.id, call.from_user.id).status
 
     if user_status in ['administrator', 'creator']:
         try:
-            # Разбаниваем пользователя
             bot.unban_chat_member(call.message.chat.id, user_id)
-
-            # Сообщаем о разбанивании
             bot.send_message(call.message.chat.id, f"🔓 Пользователь был разбанен.")
-
         except Exception as e:
             bot.send_message(call.message.chat.id, f"❗ Не удалось разбанить пользователя: {e}")
     else:
-        # Сообщение для неадминистраторов
         bot.answer_callback_query(call.id, "Убери руки, надо иметь права", show_alert=True)
 
 
@@ -2137,7 +2164,6 @@ def find_song(message):
     else:
         bot.reply_to(message, "Не удалось найти песню.")
 
-
 # /ping
 @bot.message_handler(commands=['пинг'])
 def ping(message):
@@ -2189,12 +2215,18 @@ def shorten_link(message):
     except Exception as e:
         bot.reply_to(message, f"Ошибка при сокращении ссылки: {e}")
 
-# Глобальные переменные
-message_counter = 0
-user_activity = {}
+
+# Путь к папке, где будет сохраняться база данных
+db_folder = r"C:\Users\Ш\OneDrive\Desktop\tgbot\tgbots"  # Используем raw-строку для корректной обработки пути
+
+# Убедимся, что папка существует
+os.makedirs(db_folder, exist_ok=True)
+
+# Путь к базе данных
+db_path = os.path.join(db_folder, "activity.db")
 
 # 🗃️ Подключение к базе данных
-conn = sqlite3.connect('activity.db', check_same_thread=False)
+conn = sqlite3.connect(db_path, check_same_thread=False)
 cursor = conn.cursor()
 
 # 🧱 Создание таблицы, если её нет
@@ -2210,31 +2242,37 @@ conn.commit()
 
 # ⬆️ Увеличение счётчика сообщений
 def increment_message_count(chat_id, user_id):
-    cursor.execute('''
-        INSERT INTO message_stats (chat_id, user_id, message_count)
-        VALUES (?, ?, 1)
-        ON CONFLICT(chat_id, user_id) DO UPDATE SET
-            message_count = message_count + 1
-    ''', (chat_id, user_id))
-    conn.commit()
+    with conn:
+        conn.execute('''
+            INSERT INTO message_stats (chat_id, user_id, message_count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                message_count = message_count + 1
+        ''', (chat_id, user_id))
+
 
 # 📊 Команда "/сообщения" — общее количество сообщений в чате
 @bot.message_handler(commands=['сообщения'])
-def send_message_count(message):
-    cursor.execute('SELECT SUM(message_count) FROM message_stats WHERE chat_id = ?', (message.chat.id,))
-    total = cursor.fetchone()[0] or 0
+def send_message_count(message: Message):
+    with conn:
+        cur = conn.cursor()
+        cur.execute('SELECT SUM(message_count) FROM message_stats WHERE chat_id = ?', (message.chat.id,))
+        total = cur.fetchone()[0] or 0
     bot.send_message(message.chat.id, f"📊 В чате отправлено сообщений: {total}")
+
 
 # 🔥 Команда "/актив" — топ 10 активных пользователей
 @bot.message_handler(commands=['актив'])
-def send_active_users(message):
-    cursor.execute('''
-        SELECT user_id, message_count FROM message_stats
-        WHERE chat_id = ?
-        ORDER BY message_count DESC
-        LIMIT 10
-    ''', (message.chat.id,))
-    top_users = cursor.fetchall()
+def send_active_users(message: Message):
+    with conn:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT user_id, message_count FROM message_stats
+            WHERE chat_id = ?
+            ORDER BY message_count DESC
+            LIMIT 10
+        ''', (message.chat.id,))
+        top_users = cur.fetchall()
 
     if not top_users:
         bot.send_message(message.chat.id, "Активности пользователей пока не зафиксировано.")
@@ -2248,19 +2286,27 @@ def send_active_users(message):
             username = user.username or user.first_name
             active_users_message += f"{i}. {username} — {msg_count} сообщений\n"
         except Exception:
-            continue  # если не удалось получить имя пользователя — пропускаем
+            continue
 
     bot.send_message(message.chat.id, active_users_message, parse_mode='HTML')
 
+
 # 📥 Отслеживание всех входящих сообщений
 @bot.message_handler(func=lambda message: True)
-def track_messages(message):
+def track_messages(message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+    # 📈 Обновляем счётчик
     increment_message_count(chat_id, user_id)
 
-    # 🎭 Мотивационные вставки
+    # 🔁 Проверяем пороги
+    with conn:
+        cur = conn.cursor()
+        cur.execute('SELECT SUM(message_count) FROM message_stats WHERE chat_id = ?', (chat_id,))
+        total_count = cur.fetchone()[0] or 0
+
+    # Мотивации
     reactions = ["👍", "😄", "🔥", "🎉", "👏", "💡"]
     motivational_messages = [
         "💪 Никогда не сдавайся, каждый шаг приближает тебя к цели!",
@@ -2270,10 +2316,6 @@ def track_messages(message):
         "🎯 Цель без плана — это просто мечта. Планируй и действуй!"
     ]
 
-    # Получаем общее количество сообщений в этом чате
-    cursor.execute('SELECT SUM(message_count) FROM message_stats WHERE chat_id = ?', (chat_id,))
-    total_count = cursor.fetchone()[0] or 0
-
     if total_count % 1000 == 0:
         username = message.from_user.username or message.from_user.first_name
         bot.send_message(chat_id, f"{username} на пенисе! 😆🍆")
@@ -2281,6 +2323,7 @@ def track_messages(message):
         bot.send_message(chat_id, random.choice(reactions))
     elif total_count % 75 == 0:
         bot.send_message(chat_id, random.choice(motivational_messages))
+
 
 # (Опционально) Для отладки — покажет любое сообщение
 @bot.message_handler(func=lambda msg: True)

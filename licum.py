@@ -27,6 +27,7 @@ API = os.getenv('API', 'YOUR_API_KEY')
 TOKEN = os.getenv('TOKEN','YOUR_TOKEN') 
 bot = telebot.TeleBot(TOKEN)
 
+
 # Список запрещенных слов
 BAD_WORDS = ['плохое1', 'плохое2', 'плохое3','член']
 

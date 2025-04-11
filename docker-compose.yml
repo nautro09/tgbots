@@ -1,0 +1,16 @@
+version: '3.9'
+services:
+  licum-bot:
+    build: .
+    container_name: licum_bot
+    restart: always   
+    env_file:
+      - ./.env
+    volumes:
+      - ./tgbots:/app/tgbots
+      - ./bans.db:/app/bans.db
+      - ./activity.db:/app/activity.db
+    environment:
+      - TZ=Europe/Moscow
+      - TOKEN=${TOKEN}
+      - API=${API}

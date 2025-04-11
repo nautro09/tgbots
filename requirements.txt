@@ -1,0 +1,8 @@
+pyTelegramBotAPI
+requests
+beautifulsoup4
+pillow
+googletrans==4.0.0-rc1
+youtube-search-python
+youtube-search
+pyshorteners

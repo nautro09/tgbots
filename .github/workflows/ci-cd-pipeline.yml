@@ -1,0 +1,25 @@
+name: CI/CD Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  prod-deploy:
+    name: Deploy project to server
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Deploy to server
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd nautro09/tgbots/
+          docker compose down
+          git reset --hard origin/main
+          git pull origin main
+          docker compose up --build -d

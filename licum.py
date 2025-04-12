@@ -2019,7 +2019,7 @@ def handle_location(message):
         response.raise_for_status()  # выбрасывает исключение при статусе 4xx/5xx
         data = response.json()
 
-        print(f"[ОТВЕТ OWM] Статус: {response.status_code}")
+        print(f"\n\n[ОТВЕТ OWM] Статус: {response.status_code}")
         print(f"[ОТВЕТ OWM] Данные: {data}")
 
         temp = data['main']['temp']
